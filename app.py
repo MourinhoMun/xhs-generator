@@ -4,7 +4,7 @@
 """
 import os, uuid, requests, base64, shutil, json, concurrent.futures, threading
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from layouts import LAYOUTS, LAYOUT_LIST, ILLUSTRATION_STYLES, ILLUSTRATION_STYLE_LIST
@@ -17,10 +17,30 @@ AI_KEY = "sk-GOthcTYIVEdXznmrcdxs2CDV51lb9qalw5vMbSBxeFaQFG4f"
 TEXT_MODEL = "gemini-2.0-flash"
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
-OUTPUT_DIR = "/root/projects/xhs-generator/output"
-UPLOAD_DIR = "/root/projects/xhs-generator/uploads"
-STATIC_DIR = "/root/projects/xhs-generator/static"
-DEFAULT_SAMPLE = "/root/projects/xhs-generator/static/sample_poster.jpg"
+PENGIP_API = "https://pengip.com/api/v1"
+POINTS_PER_IMAGE = 10  # 每张图片消耗积分
+
+def verify_and_charge(token: str, pages: int) -> dict:
+    """校验 token 并扣除积分，返回 {ok, error}"""
+    cost = pages * POINTS_PER_IMAGE
+    try:
+        resp = requests.post(
+            f"{PENGIP_API}/proxy/use",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"toolName": "xhs_doctor_generate", "cost": cost},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return {"ok": True}
+        data = resp.json()
+        return {"ok": False, "error": data.get("error", "积分不足或授权失效")}
+    except Exception as e:
+        return {"ok": False, "error": f"积分校验失败: {e}"}
+
+OUTPUT_DIR = "/var/www/xhs-doctor/output"
+UPLOAD_DIR = "/var/www/xhs-doctor/uploads"
+STATIC_DIR = "/var/www/xhs-doctor/static"
+DEFAULT_SAMPLE = "/var/www/xhs-doctor/static/sample_poster.jpg"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -101,7 +121,7 @@ def text_call(prompt):
 def image_call(parts_list):
     resp = requests.post(
         f"{AI_BASE}/v1beta/models/{IMAGE_MODEL}:generateContent",
-        headers={"Content-Type": "application/json", "x-goog-api-key": AI_KEY},
+        headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
         json={"contents":[{"parts":parts_list}],"generationConfig":{"responseModalities":["IMAGE"]}},
         timeout=180,
     )
@@ -190,7 +210,15 @@ async def generate(bg: BackgroundTasks,
     user_points: str = Form(""),
     total_pages: int = Form(1),
     layout_id: str = Form("A"),
-    illustration_style: str = Form("flat")):
+    illustration_style: str = Form("flat"),
+    authorization: str = Header(default="")):
+
+    # 积分校验
+    token = authorization.replace("Bearer ", "").strip()
+    if token:
+        result = verify_and_charge(token, total_pages)
+        if not result["ok"]:
+            raise HTTPException(402, result["error"])
 
     task_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
     doctor_info = {"name": doctor_name, "hospital": hospital, "department": department}
