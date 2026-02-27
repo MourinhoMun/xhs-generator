@@ -3,51 +3,80 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>医生小红书图文笔记生成器</title>
+<title>医生小红书图文生成器</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'PingFang SC','Microsoft YaHei',sans-serif;background:#f8f9fa;color:#1a1a2e;line-height:1.6}
-.page{max-width:640px;margin:0 auto;padding:20px}
-h1{font-size:24px;font-weight:800;text-align:center;margin:20px 0 8px;color:#1e293b}
-.subtitle{text-align:center;color:#64748b;font-size:14px;margin-bottom:28px}
-.form-card{background:#fff;border-radius:12px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:20px}
-.form-card h3{font-size:16px;font-weight:700;margin-bottom:14px;color:#1e293b;padding-bottom:8px;border-bottom:1px solid #f1f5f9}
-.form-group{margin-bottom:14px}
-.form-group label{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:4px}
-.form-group input,.form-group textarea{width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;font-family:inherit}
-.form-group input:focus,.form-group textarea:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
-textarea{min-height:80px;resize:vertical}
-.row{display:flex;gap:12px}
+.page{max-width:680px;margin:0 auto;padding:20px}
+h1{font-size:22px;font-weight:800;text-align:center;margin:16px 0 6px;color:#1e293b}
+.subtitle{text-align:center;color:#64748b;font-size:13px;margin-bottom:20px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:14px}
+.card h3{font-size:15px;font-weight:700;margin-bottom:12px;color:#1e293b;padding-bottom:8px;border-bottom:1px solid #f1f5f9}
+.form-group{margin-bottom:12px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:4px}
+.form-group input,.form-group textarea,.form-group select{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;font-family:inherit;background:#fff}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
+textarea{min-height:70px;resize:vertical}
+.row{display:flex;gap:10px}
 .row .form-group{flex:1}
-.photo-upload{display:flex;align-items:center;gap:14px}
-.photo-preview{width:64px;height:64px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:24px;overflow:hidden;border:2px dashed #d1d5db;flex-shrink:0}
+.photo-upload{display:flex;align-items:center;gap:12px}
+.photo-preview{width:56px;height:56px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;border:2px dashed #d1d5db;flex-shrink:0}
 .photo-preview img{width:100%;height:100%;object-fit:cover}
-.upload-btn{padding:8px 16px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#475569;font-size:13px;cursor:pointer}
+.sample-preview{width:56px;height:56px;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;border:2px dashed #d1d5db;flex-shrink:0}
+.sample-preview img{width:100%;height:100%;object-fit:cover}
+.upload-btn{padding:7px 14px;border:1px solid #d1d5db;border-radius:8px;background:#fff;color:#475569;font-size:12px;cursor:pointer}
 .upload-btn:hover{border-color:#3b82f6;color:#3b82f6}
-.btn{padding:14px 28px;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer;border:none;width:100%;transition:all 0.2s}
+.topic-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.topic-tag{padding:5px 12px;border-radius:16px;border:1px solid #e2e8f0;font-size:12px;cursor:pointer;background:#fff;color:#475569;transition:all 0.15s}
+.topic-tag:hover,.topic-tag.active{background:#1e293b;color:#fff;border-color:#1e293b}
+.option-grid{display:grid;gap:8px}
+.option-grid.cols-4{grid-template-columns:repeat(4,1fr)}
+.option-grid.cols-5{grid-template-columns:repeat(5,1fr)}
+.option-grid.cols-3{grid-template-columns:repeat(3,1fr)}
+.option-card{border:2px solid #e2e8f0;border-radius:10px;padding:10px 8px;text-align:center;cursor:pointer;transition:all 0.15s;background:#fff}
+.option-card:hover{border-color:#94a3b8}
+.option-card.active{border-color:#3b82f6;background:#eff6ff}
+.option-card .icon{font-size:20px;margin-bottom:4px}
+.option-card .name{font-size:12px;font-weight:600;color:#1e293b}
+.option-card .desc{font-size:11px;color:#94a3b8;margin-top:2px}
+.pages-grid{display:flex;gap:8px}
+.page-btn{flex:1;padding:10px 4px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;cursor:pointer;font-size:13px;font-weight:600;color:#475569;background:#fff;transition:all 0.15s}
+.page-btn:hover{border-color:#94a3b8}
+.page-btn.active{border-color:#3b82f6;background:#eff6ff;color:#1d4ed8}
+.btn{padding:13px 24px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;border:none;width:100%;transition:all 0.2s}
 .btn-primary{background:#1e293b;color:#fff}
 .btn-primary:hover{background:#0f172a}
 .btn-primary:disabled{opacity:0.4;cursor:not-allowed}
-.progress-box{text-align:center;padding:40px;background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
-.spinner{width:40px;height:40px;border:3px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 14px}
+.progress-box{text-align:center;padding:36px 20px;background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+.spinner{width:36px;height:36px;border:3px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.result-box{background:#fff;border-radius:12px;padding:24px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
-.result-link a{color:#1d4ed8;font-size:15px;font-weight:600;text-decoration:none}
-.result-link a:hover{text-decoration:underline}
-.btn-outline{background:#fff;border:1px solid #d1d5db;color:#1e293b;padding:10px 20px;border-radius:8px;font-size:14px;cursor:pointer;width:auto}
-.btn-outline:hover{border-color:#1e293b}
-.tip{font-size:12px;color:#94a3b8;margin-top:4px}
+.progress-steps{display:flex;justify-content:center;gap:6px;margin-top:14px;flex-wrap:wrap}
+.step{padding:3px 10px;border-radius:10px;font-size:11px;background:#f1f5f9;color:#94a3b8}
+.step.active{background:#dbeafe;color:#1d4ed8;font-weight:600}
+.step.done{background:#dcfce7;color:#16a34a}
+.result-box{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+.result-grid{display:grid;gap:16px}
+.result-item{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden}
+.result-item img{width:100%;display:block}
+.result-item-footer{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;background:#f8f9fa}
+.result-item-footer span{font-size:13px;font-weight:600;color:#1e293b}
+.btn-sm{padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;cursor:pointer;background:#fff;color:#1e293b}
+.btn-sm:hover{border-color:#1e293b}
+.tip{font-size:11px;color:#94a3b8;margin-top:3px}
+.partial-results{margin-top:16px}
+.partial-results .result-item{margin-bottom:10px}
 </style>
 </head>
 <body>
 <div class="page">
 <h1>📝 医生小红书图文生成器</h1>
-<div class="subtitle">输入主题，一键生成专业科普海报</div>
+<div class="subtitle">选主题 · 选版式 · 一键生成专业科普海报</div>
 
-<div class="form-card">
-  <h3>👨‍⚕️ 医生信息（保存后下次自动填充）</h3>
+<!-- 医生信息 -->
+<div class="card">
+  <h3>👨‍⚕️ 医生信息</h3>
   <div class="form-group">
-    <label>照片</label>
+    <label>医生照片</label>
     <div class="photo-upload">
       <div class="photo-preview" id="photoPreview">👤</div>
       <div>
@@ -58,38 +87,68 @@ textarea{min-height:80px;resize:vertical}
     </div>
   </div>
   <div class="row">
-    <div class="form-group">
-      <label>姓名</label>
-      <input type="text" id="doctorName" placeholder="如：张医生">
-    </div>
-    <div class="form-group">
-      <label>小红书号</label>
-      <input type="text" id="xhsId" placeholder="如：231926288">
-    </div>
+    <div class="form-group"><label>姓名</label><input type="text" id="doctorName" placeholder="如：张医生"></div>
+    <div class="form-group"><label>科室</label><input type="text" id="department" placeholder="如：整形外科"></div>
   </div>
-  <div class="row">
-    <div class="form-group">
-      <label>医院</label>
-      <input type="text" id="hospital" placeholder="如：深圳市南山区人民医院">
-    </div>
-    <div class="form-group">
-      <label>科室</label>
-      <input type="text" id="department" placeholder="如：整形美容烧伤科">
+  <div class="form-group"><label>医院</label><input type="text" id="hospital" placeholder="如：上海交通大学医学院附属第九人民医院"></div>
+</div>
+
+<!-- 底图上传 -->
+<div class="card">
+  <h3>🖼️ 参考底图（可选）</h3>
+  <div class="photo-upload">
+    <div class="sample-preview" id="samplePreview">📄</div>
+    <div>
+      <button class="upload-btn" onclick="document.getElementById('sampleFile').click()">上传底图</button>
+      <input type="file" id="sampleFile" accept="image/*" style="display:none" onchange="uploadSample(this)">
+      <div class="tip">上传你的模板或参考海报，AI会复刻其排版风格</div>
+      <div class="tip">不上传则使用默认样式</div>
     </div>
   </div>
 </div>
 
-<div class="form-card">
+<!-- 笔记内容 -->
+<div class="card">
   <h3>📝 笔记内容</h3>
   <div class="form-group">
-    <label>主题 *</label>
-    <input type="text" id="topic" placeholder="如：双眼皮术后护理注意事项">
+    <label>选择主题</label>
+    <div class="topic-tags" id="topicTags">加载中...</div>
+    <input type="text" id="topic" placeholder="或直接输入自定义主题...">
   </div>
   <div class="form-group">
-    <label>额外要求（可选）</label>
-    <textarea id="extra" placeholder="如：重点讲冷热敷和饮食，语气亲切一些..."></textarea>
+    <label>自定义要点（可选，每行一条；留空则AI自动生成）</label>
+    <textarea id="userPoints" placeholder="如：&#10;术后48小时内冷敷&#10;避免揉眼睛&#10;一周内不化妆"></textarea>
   </div>
-  <button class="btn btn-primary" id="genBtn" onclick="startGenerate()">🚀 一键生成图文笔记</button>
+</div>
+
+<!-- 生成张数 -->
+<div class="card">
+  <h3>📄 生成张数</h3>
+  <div class="pages-grid" id="pagesGrid">
+    <div class="page-btn active" onclick="selectPages(this,1)">1张</div>
+    <div class="page-btn" onclick="selectPages(this,2)">2张</div>
+    <div class="page-btn" onclick="selectPages(this,3)">3张</div>
+    <div class="page-btn" onclick="selectPages(this,4)">4张</div>
+    <div class="page-btn" onclick="selectPages(this,5)">5张</div>
+  </div>
+  <div class="tip" style="margin-top:8px">多张图会自动拆分成系列章节，内容连贯可单独发布</div>
+</div>
+
+<!-- 版式选择 -->
+<div class="card">
+  <h3>🎨 版式选择</h3>
+  <div class="option-grid cols-4" id="layoutGrid">加载中...</div>
+</div>
+
+<!-- 插图风格 -->
+<div class="card">
+  <h3>🖌️ 插图风格</h3>
+  <div class="option-grid cols-3" id="styleGrid">加载中...</div>
+</div>
+
+<!-- 生成按钮 -->
+<div class="card" style="padding:16px">
+  <button class="btn btn-primary" id="genBtn" onclick="startGenerate()">🚀 一键生成图文海报</button>
 </div>
 
 <div id="resultArea"></div>

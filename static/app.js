@@ -1,132 +1,224 @@
-// 医生小红书图文生成器
-const API = '.';
-let photoUrl = '';
+let photoLocalPath = "";
+let sampleLocalPath = "";
+let selectedPages = 1;
+let selectedLayout = "A";
+let selectedStyle = "flat";
 let pollTimer = null;
 
-// 页面加载时恢复保存的医生信息
-window.addEventListener('DOMContentLoaded', () => {
-    const saved = localStorage.getItem('xhs_doctor_info');
-    if (saved) {
-        const d = JSON.parse(saved);
-        document.getElementById('doctorName').value = d.name || '';
-        document.getElementById('hospital').value = d.hospital || '';
-        document.getElementById('department').value = d.department || '';
-        document.getElementById('xhsId').value = d.xhs_id || '';
-        if (d.photo_url) {
-            photoUrl = d.photo_url;
-            document.getElementById('photoPreview').innerHTML = `<img src="${photoUrl}">`;
-        }
-    }
-});
+window.onload = async () => {
+  const res = await fetch("/api/config");
+  const cfg = await res.json();
 
-function saveDoctorInfo() {
-    const info = {
-        name: document.getElementById('doctorName').value.trim(),
-        hospital: document.getElementById('hospital').value.trim(),
-        department: document.getElementById('department').value.trim(),
-        xhs_id: document.getElementById('xhsId').value.trim(),
-        photo_url: photoUrl,
-    };
-    localStorage.setItem('xhs_doctor_info', JSON.stringify(info));
+  // 预设主题
+  document.getElementById("topicTags").innerHTML = cfg.topics.map(t =>
+    `<span class="topic-tag" onclick="selectTopic(this,'${t}')">${t}</span>`
+  ).join("");
+
+  // 版式
+  document.getElementById("layoutGrid").innerHTML = cfg.layouts.map(l =>
+    `<div class="option-card ${l.id==='A'?'active':''}" onclick="selectLayout(this,'${l.id}')">
+      <div class="name">${l.name}</div>
+      <div class="desc">${l.desc}</div>
+    </div>`
+  ).join("");
+
+  // 插图风格
+  document.getElementById("styleGrid").innerHTML = cfg.illustration_styles.map(s =>
+    `<div class="option-card ${s.id==='flat'?'active':''}" onclick="selectStyle(this,'${s.id}')">
+      <div class="icon">${s.emoji}</div>
+      <div class="name">${s.name}</div>
+      <div class="desc">${s.desc}</div>
+    </div>`
+  ).join("");
+
+  // 恢复医生信息
+  const saved = localStorage.getItem("doctor_info");
+  if (saved) {
+    const d = JSON.parse(saved);
+    document.getElementById("doctorName").value = d.name || "";
+    document.getElementById("hospital").value = d.hospital || "";
+    document.getElementById("department").value = d.department || "";
+    if (d.photo_url) {
+      document.getElementById("photoPreview").innerHTML = `<img src="${d.photo_url}">`;
+      photoLocalPath = d.photo_local_path || "";
+    }
+  }
+};
+
+function selectTopic(el, topic) {
+  document.querySelectorAll(".topic-tag").forEach(t => t.classList.remove("active"));
+  el.classList.add("active");
+  document.getElementById("topic").value = topic;
+}
+
+function selectPages(el, n) {
+  document.querySelectorAll(".page-btn").forEach(b => b.classList.remove("active"));
+  el.classList.add("active");
+  selectedPages = n;
+}
+
+function selectLayout(el, id) {
+  document.querySelectorAll("#layoutGrid .option-card").forEach(c => c.classList.remove("active"));
+  el.classList.add("active");
+  selectedLayout = id;
+}
+
+function selectStyle(el, id) {
+  document.querySelectorAll("#styleGrid .option-card").forEach(c => c.classList.remove("active"));
+  el.classList.add("active");
+  selectedStyle = id;
 }
 
 async function uploadPhoto(input) {
-    if (!input.files[0]) return;
-    const fd = new FormData();
-    fd.append('file', input.files[0]);
-    try {
-        const resp = await fetch(`${API}/api/upload-photo`, { method: 'POST', body: fd });
-        const data = await resp.json();
-        photoUrl = data.url;
-        document.getElementById('photoPreview').innerHTML = `<img src="${photoUrl}">`;
-        saveDoctorInfo();
-    } catch(e) { alert('上传失败: ' + e.message); }
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/api/upload-photo", { method: "POST", body: fd });
+  const data = await res.json();
+  document.getElementById("photoPreview").innerHTML = `<img src="${data.url}">`;
+  photoLocalPath = data.local_path;
+  saveDoctorInfo(data.url);
+}
+
+async function uploadSample(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/api/upload-sample", { method: "POST", body: fd });
+  const data = await res.json();
+  document.getElementById("samplePreview").innerHTML = `<img src="${data.url}">`;
+  sampleLocalPath = data.local_path;
+}
+
+function saveDoctorInfo(photoUrl) {
+  localStorage.setItem("doctor_info", JSON.stringify({
+    name: document.getElementById("doctorName").value,
+    hospital: document.getElementById("hospital").value,
+    department: document.getElementById("department").value,
+    photo_url: photoUrl || document.getElementById("photoPreview").querySelector("img")?.src || "",
+    photo_local_path: photoLocalPath,
+  }));
 }
 
 async function startGenerate() {
-    const topic = document.getElementById('topic').value.trim();
-    if (!topic) { alert('请输入笔记主题'); return; }
-    saveDoctorInfo();
-    const btn = document.getElementById('genBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ 生成中...';
+  const topic = document.getElementById("topic").value.trim();
+  if (!topic) { alert("请选择或输入笔记主题"); return; }
+  saveDoctorInfo();
 
-    const fd = new FormData();
-    fd.append('topic', topic);
-    fd.append('doctor_name', document.getElementById('doctorName').value.trim());
-    fd.append('hospital', document.getElementById('hospital').value.trim());
-    fd.append('department', document.getElementById('department').value.trim());
-    fd.append('xhs_id', document.getElementById('xhsId').value.trim());
-    fd.append('photo_url', photoUrl);
-    fd.append('extra', document.getElementById('extra').value.trim());
+  const btn = document.getElementById("genBtn");
+  btn.disabled = true;
+  showProgress("pending", 0);
 
-    try {
-        const resp = await fetch(`${API}/api/generate`, { method: 'POST', body: fd });
-        const data = await resp.json();
-        showProgress();
-        pollTask(data.task_id);
-    } catch(e) {
-        alert('请求失败: ' + e.message);
-        btn.disabled = false;
-        btn.textContent = '🚀 一键生成图文笔记';
+  const fd = new FormData();
+  fd.append("topic", topic);
+  fd.append("doctor_name", document.getElementById("doctorName").value);
+  fd.append("hospital", document.getElementById("hospital").value);
+  fd.append("department", document.getElementById("department").value);
+  fd.append("photo_local_path", photoLocalPath);
+  fd.append("sample_local_path", sampleLocalPath);
+  fd.append("user_points", document.getElementById("userPoints").value);
+  fd.append("total_pages", selectedPages);
+  fd.append("layout_id", selectedLayout);
+  fd.append("illustration_style", selectedStyle);
+
+  const res = await fetch("/api/generate", { method: "POST", body: fd });
+  const { task_id } = await res.json();
+  pollResult(task_id, btn);
+}
+
+function showProgress(status, doneCount) {
+  const steps = ["generating_points","generating_illustrations","generating_poster"];
+  const labels = {
+    generating_points: "① 生成要点",
+    generating_illustrations: "② 生成插图",
+    generating_poster: `③ 合成海报`,
+    done: "✅ 完成"
+  };
+  const currentIdx = steps.indexOf(status.startsWith("generating_poster") ? "generating_poster" : status);
+  const stepsHtml = steps.map((s, i) => {
+    const cls = i < currentIdx ? "step done" : i === currentIdx ? "step active" : "step";
+    return `<span class="${cls}">${labels[s]}</span>`;
+  }).join("") + (status === "done" ? `<span class="step done">${labels.done}</span>` : "");
+
+  const progressMsg = status.startsWith("generating_poster_") 
+    ? `正在合成第 ${status.split("_")[2]} / ${selectedPages} 张...`
+    : "AI 正在生成，请稍候...";
+
+  document.getElementById("resultArea").innerHTML = `
+    <div class="progress-box">
+      <div class="spinner"></div>
+      <div style="font-size:14px;color:#475569">${progressMsg}</div>
+      <div class="progress-steps">${stepsHtml}</div>
+      ${doneCount > 0 ? `<div style="margin-top:12px;font-size:12px;color:#16a34a">已完成 ${doneCount} 张 ✓</div>` : ""}
+    </div>`;
+}
+
+function pollResult(task_id, btn) {
+  let lastDoneCount = 0;
+  pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/task/${task_id}`);
+    const data = await res.json();
+    const doneCount = (data.results || []).length;
+
+    if (data.status !== "done" && data.status !== "error") {
+      if (doneCount !== lastDoneCount) {
+        lastDoneCount = doneCount;
+        showPartialResults(data.results || [], data.status);
+      } else {
+        showProgress(data.status, doneCount);
+      }
     }
+
+    if (data.status === "done") {
+      clearInterval(pollTimer);
+      btn.disabled = false;
+      showAllResults(data);
+    } else if (data.status === "error") {
+      clearInterval(pollTimer);
+      btn.disabled = false;
+      document.getElementById("resultArea").innerHTML = `
+        <div class="result-box" style="color:#ef4444;text-align:center">❌ 生成失败：${data.error}</div>`;
+    }
+  }, 3000);
 }
 
-function showProgress() {
-    const el = document.getElementById('resultArea');
-    el.innerHTML = `
-        <div class="progress-box" style="min-height:200px">
-            <div class="spinner"></div>
-            <div style="font-size:16px;font-weight:600;margin-bottom:8px">🤖 AI正在生成科普内容...</div>
-            <div style="color:#64748b;font-size:14px">正在撰写文案并排版海报，大约需要30-60秒</div>
-        </div>`;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+function showPartialResults(results, status) {
+  const itemsHtml = results.map(r => `
+    <div class="result-item">
+      <img src="${r.poster_url}" loading="lazy">
+      <div class="result-item-footer">
+        <span>第${r.page}张：${r.chapter_title}</span>
+        <a href="${r.poster_url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
+      </div>
+    </div>`).join("");
+
+  document.getElementById("resultArea").innerHTML = `
+    <div class="result-box">
+      <div style="font-size:13px;color:#475569;margin-bottom:12px">已生成 ${results.length} / ${selectedPages} 张，继续生成中...</div>
+      <div class="result-grid">${itemsHtml}</div>
+    </div>`;
 }
 
-function pollTask(taskId) {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(async () => {
-        try {
-            const resp = await fetch(`${API}/api/task/${taskId}`);
-            const t = await resp.json();
-            if (t.status === 'done') {
-                clearInterval(pollTimer);
-                showResult(t);
-            } else if (t.status === 'error') {
-                clearInterval(pollTimer);
-                showError(t.error);
-            }
-        } catch(e) { console.error(e); }
-    }, 2000);
-}
+function showAllResults(data) {
+  const results = data.results || [];
+  const itemsHtml = results.map(r => `
+    <div class="result-item">
+      <img src="${r.poster_url}" loading="lazy">
+      <div class="result-item-footer">
+        <span>第${r.page}张：${r.chapter_title}</span>
+        <a href="${r.poster_url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
+      </div>
+    </div>`).join("");
 
-function showResult(t) {
-    const btn = document.getElementById('genBtn');
-    btn.disabled = false;
-    btn.textContent = '🚀 一键生成图文笔记';
-    const el = document.getElementById('resultArea');
-    el.innerHTML = `
-        <div class="result-box">
-            <div style="font-size:36px;margin-bottom:10px">✅</div>
-            <div style="font-size:18px;font-weight:700;margin-bottom:8px">图文笔记已生成！</div>
-            <div style="color:#64748b;font-size:14px;margin-bottom:18px">打开海报页面后，可以截图保存发小红书</div>
-            <div class="result-link" style="margin-bottom:14px">
-                <a href=".${t.poster_url}" target="_blank">📄 查看海报 →</a>
-            </div>
-            <div style="color:#94a3b8;font-size:12px;margin-bottom:14px">提示：在海报页面按 Ctrl+P 可以打印/保存为PDF</div>
-            <button class="btn-outline" onclick="document.getElementById('resultArea').innerHTML=''">关闭</button>
-        </div>`;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-function showError(msg) {
-    const btn = document.getElementById('genBtn');
-    btn.disabled = false;
-    btn.textContent = '🚀 一键生成图文笔记';
-    const el = document.getElementById('resultArea');
-    el.innerHTML = `
-        <div class="result-box" style="border:1px solid #fca5a5">
-            <div style="color:#ef4444;margin-bottom:12px">❌ 生成失败：${msg}</div>
-            <button class="btn-outline" onclick="document.getElementById('resultArea').innerHTML=''">关闭</button>
-        </div>`;
+  document.getElementById("resultArea").innerHTML = `
+    <div class="result-box">
+      <div style="font-size:15px;font-weight:700;margin-bottom:4px;color:#1e293b">✅ 全部生成完成！</div>
+      <div style="font-size:13px;color:#64748b;margin-bottom:16px">${data.series_title || ""}</div>
+      <div class="result-grid">${itemsHtml}</div>
+      <div style="margin-top:16px;text-align:center">
+        <button class="btn-sm" onclick="location.reload()">🔄 重新生成</button>
+      </div>
+    </div>`;
 }
