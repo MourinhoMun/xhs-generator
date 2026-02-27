@@ -1,3 +1,6 @@
+// 自动检测 base path（兼容子路径部署如 /xhs/）
+const BASE = window.location.pathname.replace(/\/[^/]*$/, '').replace(/\/$/, '');
+
 let photoLocalPath = "";
 let sampleLocalPath = "";
 let selectedPages = 1;
@@ -6,13 +9,8 @@ let selectedStyle = "flat";
 let pollTimer = null;
 
 window.onload = async () => {
-  const res = await fetch("/api/config");
+  const res = await fetch(`${BASE}/api/config`);
   const cfg = await res.json();
-
-  // 预设主题
-  document.getElementById("topicTags").innerHTML = cfg.topics.map(t =>
-    `<span class="topic-tag" onclick="selectTopic(this,'${t}')">${t}</span>`
-  ).join("");
 
   // 版式
   document.getElementById("layoutGrid").innerHTML = cfg.layouts.map(l =>
@@ -45,12 +43,6 @@ window.onload = async () => {
   }
 };
 
-function selectTopic(el, topic) {
-  document.querySelectorAll(".topic-tag").forEach(t => t.classList.remove("active"));
-  el.classList.add("active");
-  document.getElementById("topic").value = topic;
-}
-
 function selectPages(el, n) {
   document.querySelectorAll(".page-btn").forEach(b => b.classList.remove("active"));
   el.classList.add("active");
@@ -74,7 +66,7 @@ async function uploadPhoto(input) {
   if (!file) return;
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch("/api/upload-photo", { method: "POST", body: fd });
+  const res = await fetch(`${BASE}/api/upload-photo`, { method: "POST", body: fd });
   const data = await res.json();
   document.getElementById("photoPreview").innerHTML = `<img src="${data.url}">`;
   photoLocalPath = data.local_path;
@@ -86,7 +78,7 @@ async function uploadSample(input) {
   if (!file) return;
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch("/api/upload-sample", { method: "POST", body: fd });
+  const res = await fetch(`${BASE}/api/upload-sample`, { method: "POST", body: fd });
   const data = await res.json();
   document.getElementById("samplePreview").innerHTML = `<img src="${data.url}">`;
   sampleLocalPath = data.local_path;
@@ -104,7 +96,7 @@ function saveDoctorInfo(photoUrl) {
 
 async function startGenerate() {
   const topic = document.getElementById("topic").value.trim();
-  if (!topic) { alert("请选择或输入笔记主题"); return; }
+  if (!topic) { alert("请输入笔记主题"); return; }
   saveDoctorInfo();
 
   const btn = document.getElementById("genBtn");
@@ -123,26 +115,21 @@ async function startGenerate() {
   fd.append("layout_id", selectedLayout);
   fd.append("illustration_style", selectedStyle);
 
-  const res = await fetch("/api/generate", { method: "POST", body: fd });
+  const res = await fetch(`${BASE}/api/generate`, { method: "POST", body: fd });
   const { task_id } = await res.json();
   pollResult(task_id, btn);
 }
 
 function showProgress(status, doneCount) {
   const steps = ["generating_points","generating_illustrations","generating_poster"];
-  const labels = {
-    generating_points: "① 生成要点",
-    generating_illustrations: "② 生成插图",
-    generating_poster: `③ 合成海报`,
-    done: "✅ 完成"
-  };
+  const labels = { generating_points:"① 生成要点", generating_illustrations:"② 生成插图", generating_poster:"③ 合成海报", done:"✅ 完成" };
   const currentIdx = steps.indexOf(status.startsWith("generating_poster") ? "generating_poster" : status);
   const stepsHtml = steps.map((s, i) => {
     const cls = i < currentIdx ? "step done" : i === currentIdx ? "step active" : "step";
     return `<span class="${cls}">${labels[s]}</span>`;
   }).join("") + (status === "done" ? `<span class="step done">${labels.done}</span>` : "");
 
-  const progressMsg = status.startsWith("generating_poster_") 
+  const progressMsg = status.startsWith("generating_poster_")
     ? `正在合成第 ${status.split("_")[2]} / ${selectedPages} 张...`
     : "AI 正在生成，请稍候...";
 
@@ -158,19 +145,18 @@ function showProgress(status, doneCount) {
 function pollResult(task_id, btn) {
   let lastDoneCount = 0;
   pollTimer = setInterval(async () => {
-    const res = await fetch(`/api/task/${task_id}`);
+    const res = await fetch(`${BASE}/api/task/${task_id}`);
     const data = await res.json();
     const doneCount = (data.results || []).length;
 
     if (data.status !== "done" && data.status !== "error") {
       if (doneCount !== lastDoneCount) {
         lastDoneCount = doneCount;
-        showPartialResults(data.results || [], data.status);
+        showPartialResults(data.results || []);
       } else {
         showProgress(data.status, doneCount);
       }
     }
-
     if (data.status === "done") {
       clearInterval(pollTimer);
       btn.disabled = false;
@@ -178,22 +164,14 @@ function pollResult(task_id, btn) {
     } else if (data.status === "error") {
       clearInterval(pollTimer);
       btn.disabled = false;
-      document.getElementById("resultArea").innerHTML = `
-        <div class="result-box" style="color:#ef4444;text-align:center">❌ 生成失败：${data.error}</div>`;
+      document.getElementById("resultArea").innerHTML =
+        `<div class="result-box" style="color:#ef4444;text-align:center">❌ 生成失败：${data.error}</div>`;
     }
   }, 3000);
 }
 
-function showPartialResults(results, status) {
-  const itemsHtml = results.map(r => `
-    <div class="result-item">
-      <img src="${r.poster_url}" loading="lazy">
-      <div class="result-item-footer">
-        <span>第${r.page}张：${r.chapter_title}</span>
-        <a href="${r.poster_url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
-      </div>
-    </div>`).join("");
-
+function showPartialResults(results) {
+  const itemsHtml = results.map(r => resultItemHtml(r)).join("");
   document.getElementById("resultArea").innerHTML = `
     <div class="result-box">
       <div style="font-size:13px;color:#475569;margin-bottom:12px">已生成 ${results.length} / ${selectedPages} 张，继续生成中...</div>
@@ -202,16 +180,7 @@ function showPartialResults(results, status) {
 }
 
 function showAllResults(data) {
-  const results = data.results || [];
-  const itemsHtml = results.map(r => `
-    <div class="result-item">
-      <img src="${r.poster_url}" loading="lazy">
-      <div class="result-item-footer">
-        <span>第${r.page}张：${r.chapter_title}</span>
-        <a href="${r.poster_url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
-      </div>
-    </div>`).join("");
-
+  const itemsHtml = (data.results || []).map(r => resultItemHtml(r)).join("");
   document.getElementById("resultArea").innerHTML = `
     <div class="result-box">
       <div style="font-size:15px;font-weight:700;margin-bottom:4px;color:#1e293b">✅ 全部生成完成！</div>
@@ -219,6 +188,18 @@ function showAllResults(data) {
       <div class="result-grid">${itemsHtml}</div>
       <div style="margin-top:16px;text-align:center">
         <button class="btn-sm" onclick="location.reload()">🔄 重新生成</button>
+      </div>
+    </div>`;
+}
+
+function resultItemHtml(r) {
+  const url = `${BASE}${r.poster_url}`;
+  return `
+    <div class="result-item">
+      <img src="${url}" loading="lazy">
+      <div class="result-item-footer">
+        <span>第${r.page}张：${r.chapter_title}</span>
+        <a href="${url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
       </div>
     </div>`;
 }
