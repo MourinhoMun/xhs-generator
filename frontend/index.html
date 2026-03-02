@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小红书图文生成器</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif;
+  background: #f5f5f7; color: #1d1d1f; min-height: 100vh;
+}
+.header {
+  background: white; border-bottom: 1px solid #e5e5e5;
+  padding: 0 32px; height: 60px;
+  display: flex; align-items: center; gap: 12px;
+  position: sticky; top: 0; z-index: 100;
+}
+.header-logo { font-size: 20px; font-weight: 700; color: #ff2442; }
+.header-sub { font-size: 13px; color: #999; }
+.layout {
+  display: grid; grid-template-columns: 400px 1fr;
+  min-height: calc(100vh - 60px);
+}
+.panel-left {
+  background: white; border-right: 1px solid #e5e5e5;
+  padding: 24px 20px; display: flex; flex-direction: column;
+  gap: 18px; overflow-y: auto;
+}
+.section-label {
+  font-size: 11px; font-weight: 600; color: #999;
+  text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;
+}
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1.5px solid #e5e5e5; border-radius: 10px;
+  font-size: 14px; font-family: inherit; resize: vertical;
+  min-height: 90px; transition: border-color 0.2s; outline: none;
+}
+textarea:focus { border-color: #ff2442; }
+
+/* 风格选择 */
+.style-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.style-btn {
+  padding: 6px 4px; border: 1.5px solid #e5e5e5; border-radius: 8px;
+  background: white; font-size: 11px; cursor: pointer; text-align: center;
+  transition: all 0.15s;
+}
+.style-btn:hover { border-color: #ff2442; }
+.style-btn.active { border-color: #ff2442; background: #fff0f2; color: #ff2442; font-weight: 600; }
+.style-dot { width: 18px; height: 18px; border-radius: 50%; margin: 0 auto 3px; }
+
+/* 数量 */
+.count-row { display: flex; align-items: center; gap: 8px; }
+.count-row span { font-size: 12px; color: #666; }
+input[type=range] { flex: 1; accent-color: #ff2442; }
+.count-val { font-size: 14px; font-weight: 700; color: #ff2442; width: 20px; text-align: center; }
+
+/* ── 背景图区域 ── */
+.bg-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.bg-tab {
+  flex: 1; padding: 6px; border: 1.5px solid #e5e5e5; border-radius: 8px;
+  background: white; font-size: 12px; cursor: pointer; text-align: center;
+  transition: all 0.15s; color: #666;
+}
+.bg-tab.active { border-color: #ff2442; background: #fff0f2; color: #ff2442; font-weight: 600; }
+
+/* 预设背景网格 */
+.preset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.preset-item {
+  aspect-ratio: 1; border-radius: 8px; cursor: pointer;
+  border: 2px solid transparent; transition: all 0.15s; overflow: hidden;
+  position: relative;
+}
+.preset-item:hover { transform: scale(1.05); }
+.preset-item.active { border-color: #ff2442; box-shadow: 0 0 0 2px #ff2442; }
+.preset-item span {
+  position: absolute; bottom: 2px; left: 0; right: 0;
+  text-align: center; font-size: 9px; color: white;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+/* AI生成背景 */
+.bg-style-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.bg-style-btn {
+  padding: 6px 4px; border: 1.5px solid #e5e5e5; border-radius: 8px;
+  background: white; font-size: 11px; cursor: pointer; text-align: center;
+  transition: all 0.15s;
+}
+.bg-style-btn.active { border-color: #ff2442; background: #fff0f2; color: #ff2442; font-weight: 600; }
+
+.btn-gen-bg {
+  width: 100%; padding: 9px; background: #f5f5f7; border: 1.5px solid #e5e5e5;
+  border-radius: 8px; font-size: 13px; cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-gen-bg:hover { border-color: #ff2442; color: #ff2442; }
+.btn-gen-bg:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 上传区域 */
+.upload-area {
+  border: 2px dashed #e5e5e5; border-radius: 10px; padding: 20px;
+  text-align: center; cursor: pointer; transition: all 0.2s;
+  font-size: 13px; color: #999;
+}
+.upload-area:hover { border-color: #ff2442; color: #ff2442; }
+.upload-area input { display: none; }
+
+/* 当前背景预览 */
+.bg-preview {
+  width: 100%; height: 60px; border-radius: 8px;
+  border: 1px solid #e5e5e5; overflow: hidden; position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.bg-preview-img { width: 100%; height: 100%; object-fit: cover; }
+.bg-preview-gradient { width: 100%; height: 100%; }
+.bg-clear {
+  position: absolute; top: 4px; right: 4px;
+  background: rgba(0,0,0,0.5); color: white; border: none;
+  border-radius: 50%; width: 20px; height: 20px; font-size: 12px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+/* 生成按钮 */
+.btn-generate {
+  width: 100%; padding: 13px; background: linear-gradient(135deg, #ff2442, #ff6b6b);
+  color: white; border: none; border-radius: 12px; font-size: 15px;
+  font-weight: 700; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-generate:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(255,36,66,0.35); }
+.btn-generate:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+.divider { height: 1px; background: #f0f0f0; }
+
+/* 文案 */
+.caption-box {
+  background: #f9f9f9; border: 1px solid #e5e5e5; border-radius: 10px;
+  padding: 10px 12px; font-size: 13px; color: #444; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-all;
+}
+.tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tag { background: #fff0f2; color: #ff2442; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+.btn-copy {
+  width: 100%; padding: 9px; background: white; border: 1.5px solid #e5e5e5;
+  border-radius: 8px; font-size: 13px; cursor: pointer; transition: all 0.15s; color: #444;
+}
+.btn-copy:hover { border-color: #ff2442; color: #ff2442; }
+
+/* 右侧 */
+.panel-right { padding: 24px 28px; overflow-y: auto; }
+.empty-state {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px; color: #bbb;
+}
+.empty-icon { font-size: 56px; }
+.empty-text { font-size: 14px; }
+.cards-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.cards-title { font-size: 15px; font-weight: 700; }
+.btn-download-all {
+  padding: 7px 16px; background: #ff2442; color: white; border: none;
+  border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+}
+.btn-download-all:hover { background: #e01f3a; }
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.card-item {
+  background: white; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08); transition: transform 0.2s, box-shadow 0.2s;
+}
+.card-item:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+.card-img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.card-img-placeholder {
+  width: 100%; aspect-ratio: 1;
+  background: linear-gradient(135deg, #f0f0f0, #e0e0e0);
+  display: flex; align-items: center; justify-content: center; font-size: 28px;
+}
+.card-footer { padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; }
+.card-num { font-size: 11px; color: #999; }
+.btn-dl {
+  padding: 4px 10px; background: #f5f5f7; border: none; border-radius: 6px;
+  font-size: 11px; cursor: pointer; color: #444; transition: all 0.15s;
+}
+.btn-dl:hover { background: #ff2442; color: white; }
+
+/* Loading */
+.loading-overlay {
+  position: fixed; inset: 0; background: rgba(255,255,255,0.85);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 999; backdrop-filter: blur(4px);
+}
+.spinner {
+  width: 44px; height: 44px; border: 4px solid #f0f0f0;
+  border-top-color: #ff2442; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 14px; color: #666; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+  background: #1d1d1f; color: white; padding: 9px 18px;
+  border-radius: 20px; font-size: 13px; z-index: 9999;
+  animation: fadeup 0.3s ease;
+}
+@keyframes fadeup {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Steps */
+.steps { display: flex; gap: 5px; }
+.step { flex: 1; height: 3px; border-radius: 2px; background: #f0f0f0; transition: background 0.3s; }
+.step.done { background: #ff2442; }
+.step.active { background: linear-gradient(90deg, #ff2442, #ffb3be); }
+
+/* bg loading spinner inline */
+.spin-sm {
+  width: 14px; height: 14px; border: 2px solid #e5e5e5;
+  border-top-color: #ff2442; border-radius: 50%;
+  animation: spin 0.8s linear infinite; display: inline-block;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="loading-overlay" v-if="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">{{ loadingText }}</div>
+  </div>
+  <div class="toast" v-if="toast">{{ toast }}</div>
+
+  <div class="header">
+    <div class="header-logo">📕 小红书图文生成器</div>
+    <div class="header-sub">by pengip.com</div>
+  </div>
+
+  <div class="layout">
+    <!-- 左侧控制面板 -->
+    <div class="panel-left">
+      <div class="steps">
+        <div class="step" :class="{ done: step > 1, active: step === 1 }"></div>
+        <div class="step" :class="{ done: step > 2, active: step === 2 }"></div>
+        <div class="step" :class="{ done: step > 3, active: step === 3 }"></div>
+      </div>
+
+      <!-- 主题 -->
+      <div class="form-group">
+        <div class="section-label">📝 主题 / 要求</div>
+        <textarea v-model="topic"
+          placeholder="例如：分享5个提升工作效率的AI工具&#10;例如：医美术后护理注意事项&#10;例如：新手学习小红书运营的方法"
+          rows="4"></textarea>
+      </div>
+
+      <!-- 卡片风格 -->
+      <div class="form-group">
+        <div class="section-label">🎨 卡片风格</div>
+        <div class="style-grid">
+          <div v-for="s in styles" :key="s.key"
+            class="style-btn" :class="{ active: selectedStyle === s.key }"
+            @click="selectedStyle = s.key">
+            <div class="style-dot" :style="{ background: s.color }"></div>
+            {{ s.name }}
+          </div>
+        </div>
+      </div>
+
+      <!-- 卡片数量 -->
+      <div class="form-group">
+        <div class="section-label">📊 卡片数量</div>
+        <div class="count-row">
+          <span>3</span>
+          <input type="range" v-model.number="cardCount" min="3" max="8" step="1">
+          <span>8</span>
+          <div class="count-val">{{ cardCount }}</div>
+        </div>
+      </div>
+
+      <!-- 背景图 -->
+      <div class="form-group">
+        <div class="section-label">🖼️ 背景图片</div>
+
+        <!-- Tab切换 -->
+        <div class="bg-tabs">
+          <button class="bg-tab" :class="{ active: bgMode === 'none' }" @click="setBgMode('none')">无背景</button>
+          <button class="bg-tab" :class="{ active: bgMode === 'preset' }" @click="setBgMode('preset')">预设</button>
+          <button class="bg-tab" :class="{ active: bgMode === 'ai' }" @click="setBgMode('ai')">AI生成</button>
+          <button class="bg-tab" :class="{ active: bgMode === 'upload' }" @click="setBgMode('upload')">上传</button>
+        </div>
+
+        <!-- 预设背景 -->
+        <div v-if="bgMode === 'preset'">
+          <div class="preset-grid">
+            <div v-for="p in presets" :key="p.key"
+              class="preset-item" :class="{ active: selectedPreset === p.key }"
+              :style="{ background: p.css }"
+              @click="selectPreset(p)">
+              <span>{{ p.name }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI生成背景 -->
+        <div v-if="bgMode === 'ai'">
+          <div class="bg-style-grid">
+            <button v-for="s in bgStyles" :key="s.key"
+              class="bg-style-btn" :class="{ active: selectedBgStyle === s.key }"
+              @click="selectedBgStyle = s.key">
+              {{ s.icon }} {{ s.name }}
+            </button>
+          </div>
+          <button class="btn-gen-bg" @click="generateBg" :disabled="bgGenerating || !topic.trim()">
+            <span v-if="bgGenerating" class="spin-sm"></span>
+            <span>{{ bgGenerating ? 'AI生成中...' : '✨ AI生成背景图' }}</span>
+          </button>
+        </div>
+
+        <!-- 上传背景 -->
+        <div v-if="bgMode === 'upload'">
+          <div class="upload-area" @click="$refs.bgInput.click()" @dragover.prevent @drop.prevent="handleDrop">
+            <input ref="bgInput" type="file" accept="image/*" @change="handleUpload">
+            <div>📁 点击上传或拖拽图片</div>
+            <div style="font-size:11px;margin-top:4px;color:#bbb">支持 JPG / PNG / WebP，最大 10MB</div>
+          </div>
+        </div>
+
+        <!-- 当前背景预览 -->
+        <div class="bg-preview" v-if="currentBgUrl || currentBgCss">
+          <img v-if="currentBgUrl" :src="currentBgUrl" class="bg-preview-img">
+          <div v-else class="bg-preview-gradient" :style="{ background: currentBgCss }"></div>
+          <button class="bg-clear" @click="clearBg">✕</button>
+        </div>
+      </div>
+
+      <!-- 生成按钮 -->
+      <button class="btn-generate" @click="generate" :disabled="loading || !topic.trim()">
+        {{ loading ? '生成中...' : '✨ 一键生成' }}
+      </button>
+
+      <!-- 文案结果 -->
+      <template v-if="result">
+        <div class="divider"></div>
+        <div class="form-group">
+          <div class="section-label">📋 发布文案</div>
+          <div class="caption-box">{{ result.caption }}</div>
+          <div class="tags">
+            <span class="tag" v-for="tag in result.tags" :key="tag">#{{ tag }}</span>
+          </div>
+          <button class="btn-copy" @click="copyCaption">📋 复制文案</button>
+        </div>
+      </template>
+    </div>
+
+    <!-- 右侧卡片预览 -->
+    <div class="panel-right">
+      <div class="empty-state" v-if="!result">
+        <div class="empty-icon">🖼️</div>
+        <div class="empty-text">输入主题，点击生成，卡片将在这里展示</div>
+      </div>
+      <template v-else>
+        <div class="cards-header">
+          <div class="cards-title">{{ result.title }}</div>
+          <button class="btn-download-all" @click="downloadAll" v-if="imageUrls.length">
+            ⬇️ 下载全部 ({{ imageUrls.length }}张)
+          </button>
+        </div>
+        <div class="cards-grid">
+          <div class="card-item" v-for="(card, i) in result.cards" :key="i">
+            <img v-if="imageUrls[i]" :src="imageUrls[i]" class="card-img" :alt="card.heading">
+            <div v-else class="card-img-placeholder">{{ card.emoji || '🖼️' }}</div>
+            <div class="card-footer">
+              <span class="card-num">第{{ card.index }}张 · {{ card.heading }}</span>
+              <button class="btn-dl" @click="downloadOne(i)" v-if="imageUrls[i]">下载</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+<script>
+const { createApp, ref } = Vue;
+const API_BASE = '/xhs';
+
+createApp({
+  setup() {
+    const topic = ref('');
+    const selectedStyle = ref('default');
+    const cardCount = ref(5);
+    const loading = ref(false);
+    const loadingText = ref('');
+    const result = ref(null);
+    const imageUrls = ref([]);
+    const toast = ref('');
+    const step = ref(1);
+
+    // 背景相关
+    const bgMode = ref('none');
+    const selectedPreset = ref('');
+    const selectedBgStyle = ref('abstract');
+    const currentBgUrl = ref('');   // 图片URL（AI生成或上传）
+    const currentBgCss = ref('');   // CSS渐变（预设）
+    const bgGenerating = ref(false);
+
+    const styles = [
+      { key: 'default', name: '紫色', color: 'linear-gradient(135deg,#667eea,#764ba2)' },
+      { key: 'pink',    name: '粉色', color: 'linear-gradient(135deg,#f093fb,#f5576c)' },
+      { key: 'green',   name: '绿色', color: 'linear-gradient(135deg,#43e97b,#38f9d7)' },
+      { key: 'dark',    name: '深色', color: 'linear-gradient(135deg,#1a1a2e,#16213e)' },
+      { key: 'warm',    name: '暖黄', color: 'linear-gradient(135deg,#f7971e,#ffd200)' },
+    ];
+
+    const presets = [
+      { key: 'p1',  name: '星空',   css: 'linear-gradient(135deg,#0f0c29,#302b63,#24243e)' },
+      { key: 'p2',  name: '极光',   css: 'linear-gradient(135deg,#43cea2,#185a9d)' },
+      { key: 'p3',  name: '玫瑰',   css: 'linear-gradient(135deg,#f953c6,#b91d73)' },
+      { key: 'p4',  name: '日落',   css: 'linear-gradient(135deg,#f7971e,#ffd200,#f953c6)' },
+      { key: 'p5',  name: '薄荷',   css: 'linear-gradient(135deg,#a8edea,#fed6e3)' },
+      { key: 'p6',  name: '深海',   css: 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)' },
+      { key: 'p7',  name: '奶油',   css: 'linear-gradient(135deg,#ffecd2,#fcb69f)' },
+      { key: 'p8',  name: '森林',   css: 'linear-gradient(135deg,#134e5e,#71b280)' },
+      { key: 'p9',  name: '紫梦',   css: 'linear-gradient(135deg,#a18cd1,#fbc2eb)' },
+      { key: 'p10', name: '炭黑',   css: 'linear-gradient(135deg,#232526,#414345)' },
+      { key: 'p11', name: '天空',   css: 'linear-gradient(135deg,#89f7fe,#66a6ff)' },
+      { key: 'p12', name: '樱花',   css: 'linear-gradient(135deg,#fda085,#f6d365)' },
+    ];
+
+    const bgStyles = [
+      { key: 'abstract', icon: '🌊', name: '抽象' },
+      { key: 'nature',   icon: '🌿', name: '自然' },
+      { key: 'tech',     icon: '⚡', name: '科技' },
+      { key: 'minimal',  icon: '◻️', name: '简约' },
+      { key: 'texture',  icon: '📄', name: '纹理' },
+      { key: 'city',     icon: '🌆', name: '城市' },
+    ];
+
+    function showToast(msg, ms = 2500) {
+      toast.value = msg;
+      setTimeout(() => toast.value = '', ms);
+    }
+
+    function setBgMode(mode) {
+      bgMode.value = mode;
+      if (mode === 'none') clearBg();
+    }
+
+    function selectPreset(p) {
+      selectedPreset.value = p.key;
+      currentBgUrl.value = '';
+      currentBgCss.value = p.css;
+    }
+
+    function clearBg() {
+      currentBgUrl.value = '';
+      currentBgCss.value = '';
+      selectedPreset.value = '';
+    }
+
+    async function generateBg() {
+      if (!topic.value.trim()) return showToast('请先输入主题');
+      bgGenerating.value = true;
+      try {
+        const r = await fetch(`${API_BASE}/api/bg/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: topic.value, bg_style: selectedBgStyle.value })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error);
+        currentBgUrl.value = d.url;
+        currentBgCss.value = '';
+        showToast('✅ 背景图生成成功');
+      } catch (err) {
+        showToast('❌ ' + err.message);
+      } finally {
+        bgGenerating.value = false;
+      }
+    }
+
+    async function handleUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append('image', file);
+      try {
+        const r = await fetch(`${API_BASE}/api/bg/upload`, { method: 'POST', body: form });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error);
+        currentBgUrl.value = d.url;
+        currentBgCss.value = '';
+        showToast('✅ 上传成功');
+      } catch (err) {
+        showToast('❌ ' + err.message);
+      }
+    }
+
+    function handleDrop(e) {
+      const file = e.dataTransfer.files[0];
+      if (!file || !file.type.startsWith('image/')) return showToast('请上传图片文件');
+      const input = document.querySelector('input[type=file]');
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      handleUpload({ target: input });
+    }
+
+    // 获取当前背景值（传给render API）
+    function getBgValue() {
+      if (currentBgUrl.value) return currentBgUrl.value;
+      if (currentBgCss.value) return currentBgCss.value;
+      return null;
+    }
+
+    async function generate() {
+      if (!topic.value.trim()) return;
+      loading.value = true;
+      loadingText.value = 'AI 正在创作文案...';
+      result.value = null;
+      imageUrls.value = [];
+      step.value = 1;
+
+      try {
+        const r1 = await fetch(`${API_BASE}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: topic.value, style: selectedStyle.value, card_count: cardCount.value })
+        });
+        const d1 = await r1.json();
+        if (!d1.success) throw new Error(d1.error || '文案生成失败');
+
+        result.value = d1.data;
+        step.value = 2;
+        loadingText.value = '正在渲染图片卡片...';
+
+        const r2 = await fetch(`${API_BASE}/api/render`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cards: d1.data.cards,
+            title: d1.data.title,
+            style: selectedStyle.value,
+            bg_image: getBgValue(),
+          })
+        });
+        const d2 = await r2.json();
+        if (!d2.success) throw new Error(d2.error || '图片渲染失败');
+
+        imageUrls.value = d2.urls;
+        step.value = 3;
+        showToast(`✅ 生成完成！共 ${d2.urls.length} 张卡片`);
+      } catch (err) {
+        showToast('❌ ' + err.message);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    function downloadOne(i) {
+      const url = imageUrls.value[i];
+      if (!url) return;
+      const a = document.createElement('a');
+      a.href = url; a.download = `xhs_card_${i + 1}.png`; a.click();
+    }
+
+    function downloadAll() {
+      imageUrls.value.forEach((url, i) => {
+        if (!url) return;
+        setTimeout(() => {
+          const a = document.createElement('a');
+          a.href = url; a.download = `xhs_card_${i + 1}.png`; a.click();
+        }, i * 300);
+      });
+    }
+
+    function copyCaption() {
+      if (!result.value) return;
+      const text = result.value.caption + '\n\n' + result.value.tags.map(t => '#' + t).join(' ');
+      navigator.clipboard.writeText(text).then(() => showToast('✅ 文案已复制'));
+    }
+
+    return {
+      topic, selectedStyle, cardCount, loading, loadingText,
+      result, imageUrls, toast, step, styles,
+      bgMode, selectedPreset, selectedBgStyle, currentBgUrl, currentBgCss, bgGenerating,
+      presets, bgStyles,
+      setBgMode, selectPreset, clearBg, generateBg, handleUpload, handleDrop,
+      generate, downloadOne, downloadAll, copyCaption,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
