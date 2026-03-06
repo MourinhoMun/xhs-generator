@@ -5,6 +5,11 @@ let selectedLayout = "A", selectedStyle = "flat", selectedFontSize = "medium";
 let selectedTitleColor = "#1e293b", selectedBodyColor = "#475569";
 let currentMode = "normal", confirmedContent = null, pollTimer = null;
 
+// 页面卸载时清理定时器
+window.addEventListener("beforeunload", () => {
+  if (pollTimer) clearInterval(pollTimer);
+});
+
 window.onload = async () => {
   const res = await fetch(`${BASE}/api/config`);
   const cfg = await res.json();
@@ -147,10 +152,24 @@ async function uploadRef(input) {
   document.getElementById("refPreview").innerHTML = `<div class="spinner" style="width:24px;height:24px;margin:auto"></div>`;
   const fd = new FormData(); fd.append("file", file);
   const res = await fetch(`${BASE}/api/ocr`, { method: "POST", body: fd, headers: { "Authorization": `Bearer ${token}` } });
-  if (!res.ok) { alert("识别失败，请重试"); return; }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("user_token");
+      document.getElementById("tokenSection").style.display = "block";
+      alert("登录已过期，请前往 pengip.com 重新登录后刷新此页面");
+    } else if (res.status === 402) {
+      alert("积分不足，请前往 pengip.com 充值");
+    } else {
+      alert("识别失败，请重试");
+    }
+    document.getElementById("refPreview").innerHTML = "📸";
+    return;
+  }
   const data = await res.json();
 
-  document.getElementById("refPreview").innerHTML = `<img src="${data.image_url}" style="width:100%;height:100%;object-fit:cover">`;
+  document.getElementById("refPreview").innerHTML = `<div style="font-size:12px;color:#16a34a;padding:4px">✅ 识别成功</div>`;
+  document.getElementById("refText").value = data.text;
   document.getElementById("refText").value = data.text;
   document.getElementById("refTextArea").style.display = "block";
   confirmedContent = null;
@@ -174,7 +193,19 @@ async function previewContent() {
   const res = await fetch(`${BASE}/api/preview-content`, { method: "POST", body: fd, headers: { "Authorization": `Bearer ${token}` } });
   btn.disabled = false; btn.textContent = "✨ 生成文案预览";
 
-  if (!res.ok) { alert("生成失败，请重试"); return; }
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("user_token");
+      document.getElementById("tokenSection").style.display = "block";
+      alert("登录已过期，请前往 pengip.com 重新登录后刷新此页面");
+    } else if (res.status === 402) {
+      alert("积分不足，请前往 pengip.com 充值");
+    } else {
+      alert(errData.detail || "生成失败，请重试");
+    }
+    return;
+  }
   const data = await res.json();
   confirmedContent = data;
 
@@ -231,7 +262,19 @@ async function startGenerate() {
 
   const res = await fetch(`${BASE}/api/generate`, { method: "POST", body: fd, headers: { "Authorization": `Bearer ${token}` } });
   const data = await res.json();
-  if (!res.ok) { alert(data.detail || "请求失败"); btn.disabled = false; return; }
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("user_token");
+      document.getElementById("tokenSection").style.display = "block";
+      alert("登录已过期，请前往 pengip.com 重新登录后刷新此页面");
+    } else if (res.status === 402) {
+      alert("积分不足，请前往 pengip.com 充值");
+    } else {
+      alert(data.detail || data.error || "请求失败");
+    }
+    btn.disabled = false;
+    return;
+  }
   pollResult(data.task_id, btn);
 }
 

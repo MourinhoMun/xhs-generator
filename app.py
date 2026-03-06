@@ -3,7 +3,7 @@
 支持：多张系列笔记、8种版式、底图上传、6种插图风格
 """
 import os, uuid, requests, base64, shutil, json, concurrent.futures, threading, time
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,22 +20,49 @@ IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 PENGIP_API = "https://pengip.com/api/v1"
 POINTS_PER_IMAGE = 10  # 每张图片消耗积分
 
-def verify_and_charge(token: str, pages: int) -> dict:
-    """校验 token 并扣除积分，返回 {ok, error}"""
-    cost = pages * POINTS_PER_IMAGE
+def charge_points(token: str, software: str, times: int, amount_per_time: int) -> dict:
+    """预扣积分：调用 /proxy/use times 次。返回 {ok, error}。
+
+    说明：主站扣费接口是按调用次数扣 Tool.points；这里通过循环实现按张计费的预扣。
+    """
+    try:
+        for _ in range(times):
+            resp = requests.post(
+                f"{PENGIP_API}/proxy/use",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"software": software},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                data = resp.json()
+                return {"ok": False, "error": data.get("error", "积分不足或授权失效")}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": f"积分扣除失败: {e}"}
+
+
+def refund_points(token: str, user_id: str, amount: int, related_id: str, reason: str) -> dict:
+    """按差额退回积分（调用主站 /points/refund，幂等由 relatedId 保证）"""
     try:
         resp = requests.post(
-            f"{PENGIP_API}/proxy/use",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"software": "xhs_doctor_generate"},
+            f"{PENGIP_API}/points/refund",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-internal-refund-secret": os.environ.get("INTERNAL_REFUND_SECRET", ""),
+            },
+            json={
+                "userId": user_id,
+                "amount": amount,
+                "relatedId": related_id,
+                "reason": reason,
+            },
             timeout=10,
         )
-        if resp.status_code == 200:
-            return {"ok": True}
-        data = resp.json()
-        return {"ok": False, "error": data.get("error", "积分不足或授权失效")}
+        if resp.status_code != 200:
+            return {"ok": False, "error": resp.text[:200]}
+        return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": f"积分校验失败: {e}"}
+        return {"ok": False, "error": f"退款失败: {e}"}
 
 OUTPUT_DIR = "/var/www/xhs-doctor/output"
 UPLOAD_DIR = "/var/www/xhs-doctor/uploads"
@@ -48,6 +75,20 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 tasks = {}
 tasks_lock = threading.Lock()
 
+TASK_TTL_HOURS = 2  # 任务保留 2 小时后清理
+
+def cleanup_old_tasks():
+    """清理超过 TTL 的已完成任务"""
+    cutoff = datetime.now() - timedelta(hours=TASK_TTL_HOURS)
+    with tasks_lock:
+        expired = [
+            k for k, v in tasks.items()
+            if v.get("status") in ("done", "error")
+            and datetime.fromisoformat(v.get("created_at", datetime.now().isoformat())) < cutoff
+        ]
+        for k in expired:
+            tasks.pop(k, None)
+
 def update_task(task_id, updates):
     """线程安全地更新任务状态"""
     with tasks_lock:
@@ -55,6 +96,26 @@ def update_task(task_id, updates):
             tasks[task_id].update(updates)
 
 ALLOWED_IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
+ALLOWED_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/gif"
+}
+
+def validate_mime_type(content: bytes):
+    """通过文件魔数验证 MIME 类型"""
+    signatures = {
+        b"\xff\xd8\xff": "image/jpeg",
+        b"\x89PNG\r\n\x1a\n": "image/png",
+        b"RIFF": "image/webp",  # RIFF....WEBP
+        b"GIF87a": "image/gif",
+        b"GIF89a": "image/gif",
+    }
+    for sig, mime in signatures.items():
+        if content[:len(sig)] == sig:
+            # webp 需额外确认
+            if mime == "image/webp" and content[8:12] != b"WEBP":
+                continue
+            return mime
+    raise HTTPException(400, "不支持的文件类型，请上传图片文件")
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 def validate_image_ext(filename):
@@ -221,6 +282,23 @@ async def ocr_reference(file: UploadFile = File(...), authorization: str = Heade
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(401, "请先激活")
+
+    # 扣费（OCR 1积分）
+    try:
+        resp = requests.post(
+            f"{PENGIP_API}/proxy/use",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"software": "xhs_doctor_ocr"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            data = resp.json()
+            raise HTTPException(402, data.get("error", "积分不足或授权失效"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"积分校验失败: {e}")
+
     ext = validate_image_ext(file.filename)
     fname = f"ref_{uuid.uuid4().hex[:8]}.{ext}"
     fpath = os.path.join(UPLOAD_DIR, fname)
@@ -241,7 +319,12 @@ async def ocr_reference(file: UploadFile = File(...), authorization: str = Heade
     if resp.status_code != 200:
         raise HTTPException(500, f"OCR失败: {resp.text[:200]}")
     text = resp.json()["choices"][0]["message"]["content"]
-    return {"text": text, "image_url": f"/uploads/{fname}"}
+    # OCR 完成后删除临时文件，避免堆积
+    try:
+        os.remove(fpath)
+    except Exception:
+        pass
+    return {"text": text}
 
 
 @app.post("/api/preview-content")
@@ -254,6 +337,22 @@ async def preview_content(
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(401, "请先激活")
+
+    # 扣费（文案预览 2积分）
+    try:
+        resp = requests.post(
+            f"{PENGIP_API}/proxy/use",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"software": "xhs_doctor_preview"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            data = resp.json()
+            raise HTTPException(402, data.get("error", "积分不足或授权失效"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"积分校验失败: {e}")
 
     pmin, pmax = POINTS_PER_PAGE.get(total_pages, (3, 4))
     prompt = f"""你是小红书医疗科普博主。下面是一篇对标笔记的文字内容，请学习其风格和表达方式，生成一篇全新的、不重复的笔记内容。
@@ -297,9 +396,9 @@ def get_config():
 @app.post("/api/upload-photo")
 async def upload_photo(file: UploadFile = File(...)):
     ext = validate_image_ext(file.filename)
-    # 读取文件内容并检查大小
     content = await file.read()
     validate_file_size(len(content))
+    validate_mime_type(content)
     fname = f"photo_{uuid.uuid4().hex[:8]}.{ext}"
     fpath = os.path.join(UPLOAD_DIR, fname)
     validate_upload_path(fpath)
@@ -312,6 +411,7 @@ async def upload_sample(file: UploadFile = File(...)):
     ext = validate_image_ext(file.filename)
     content = await file.read()
     validate_file_size(len(content))
+    validate_mime_type(content)
     fname = f"sample_{uuid.uuid4().hex[:8]}.{ext}"
     fpath = os.path.join(UPLOAD_DIR, fname)
     validate_upload_path(fpath)
@@ -337,15 +437,16 @@ async def generate(bg: BackgroundTasks,
     confirmed_content: str = Form(""),
     authorization: str = Header(default="")):
 
-    # 积分校验（必须提供 token）
+    # 积分预扣（按张数 * 10），最终按成功张数结算并退差额
     token = authorization.replace("Bearer ", "").strip()
     if not token:
         raise HTTPException(401, "授权失效，请重新激活")
-    result = verify_and_charge(token, total_pages)
-    if not result["ok"]:
-        raise HTTPException(402, result["error"])
 
-    task_id = datetime.now().strftime("%Y%m%d%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    charge = charge_points(token, "xhs_doctor_generate", total_pages, POINTS_PER_IMAGE)
+    if not charge["ok"]:
+        raise HTTPException(402, charge["error"])
+
+    task_id = uuid.uuid4().hex
     doctor_info = {"name": doctor_name, "hospital": hospital, "department": department}
     
     # 验证路径安全性
@@ -360,13 +461,42 @@ async def generate(bg: BackgroundTasks,
     sample_path = sample_local_path if sample_local_path and os.path.exists(sample_local_path) else DEFAULT_SAMPLE
     
     with tasks_lock:
-        tasks[task_id] = {"status": "pending", "task_id": task_id, "total_pages": total_pages, "results": []}
+        cleanup_old_tasks()
+        tasks[task_id] = {
+            "status": "pending",
+            "task_id": task_id,
+            "total_pages": total_pages,
+            "results": [],
+            "created_at": datetime.now().isoformat(),
+            "token": token,
+            "refund_settled": False,
+        }
+    # 生成前通过 /balance 获取 userId，用于差额退款
+    bal = requests.get(
+        f"{PENGIP_API}/user/balance",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    user_id = None
+    if bal.status_code == 200:
+        try:
+            user_id = bal.json().get("userId")
+        except Exception:
+            user_id = None
+
+    update_task(task_id, {"charged_pages": total_pages, "success_pages": 0, "user_id": user_id})
+
     bg.add_task(do_generate, task_id, topic, user_points, doctor_info,
                 photo_local_path, sample_path, total_pages, layout_id, illustration_style,
                 title_color, body_color, font_size, confirmed_content)
     return {"task_id": task_id}
 
 def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_path, total_pages, layout_id, illus_style, title_color="#1e293b", body_color="#475569", font_size="medium", confirmed_content=""):
+    """生成图片任务。
+
+    计费规则：请求开始时已按 total_pages 预扣积分；这里按实际成功页数结算并退差额。
+    """
+    success_pages = 0
     try:
         update_task(task_id, {"status": "generating_points"})
         # 对标模式：直接用确认好的文案，跳过AI生成
@@ -383,7 +513,7 @@ def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_pat
             pages.append(pages[-1])
         update_task(task_id, {"series_title": series_data.get("series_title","")})
 
-        # Step 2: 逐页生成插图（Bug fix: 避免嵌套ThreadPoolExecutor死锁，改为顺序生成插图）
+        # Step 2: 逐页生成插图
         update_task(task_id, {"status": "generating_illustrations"})
         page_illustrations = []
         for page in pages:
@@ -411,18 +541,43 @@ def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_pat
                 "chapter_title": page.get("chapter_title",""),
                 "poster_url": f"/output/{fname}"
             })
-            # Bug fix: 线程安全地更新 results（用副本替换）
+            success_pages += 1
             update_task(task_id, {"results": list(results)})
 
-        update_task(task_id, {"status": "done"})
+        update_task(task_id, {"status": "done", "success_pages": success_pages})
     except Exception as e:
-        update_task(task_id, {"status": "error", "error": str(e)})
+        update_task(task_id, {"status": "error", "error": str(e), "success_pages": success_pages})
 
 @app.get("/api/task/{task_id}")
 def get_task(task_id: str):
     if task_id not in tasks:
         raise HTTPException(404, "Task not found")
-    return tasks[task_id]
+
+    t = tasks[task_id]
+
+    # Once task is finished, settle refund exactly once.
+    if t.get("status") in ("done", "error") and not t.get("refund_settled"):
+        charged_pages = int(t.get("charged_pages") or 0)
+        success_pages = int(t.get("success_pages") or 0)
+        user_id = t.get("user_id")
+
+        # Only refund for the difference. (charged = pages*10)
+        to_refund = max(0, (charged_pages - success_pages) * POINTS_PER_IMAGE)
+        if to_refund > 0 and user_id:
+            related_id = f"xhs_doctor_{task_id}"
+            rr = refund_points(
+                token=t.get("token", ""),
+                user_id=user_id,
+                amount=to_refund,
+                related_id=related_id,
+                reason=f"xhs-doctor refund: success={success_pages}/{charged_pages}",
+            )
+            if not rr.get("ok"):
+                update_task(task_id, {"refund_error": rr.get("error")})
+
+        update_task(task_id, {"refund_settled": True})
+
+    return t
 
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
