@@ -346,12 +346,40 @@ function showAllResults(data) {
 }
 
 function resultItemHtml(r) {
-  const url = `${BASE}${r.poster_url}`;
+  const rawUrl = `${BASE}${r.poster_url}`;
+  // Use short-lived signed URL for <img src> (no Authorization headers)
+  const imgId = `img_${r.page}_${Math.random().toString(16).slice(2)}`;
+  setTimeout(() => attachSignedSrc(imgId, rawUrl), 0);
+
   return `<div class="result-item">
-    <img src="${url}" loading="lazy">
+    <img id="${imgId}" src="" loading="lazy" style="background:#f1f5f9">
     <div class="result-item-footer">
       <span>第${r.page}张：${r.chapter_title}</span>
-      <a href="${url}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
+      <a href="${rawUrl}" download target="_blank"><button class="btn-sm">⬇️ 下载</button></a>
     </div>
   </div>`;
+}
+
+async function attachSignedSrc(imgId, rawUrl) {
+  try {
+    const token = localStorage.getItem('user_token') || '';
+    if (!token) return;
+
+    // rawUrl looks like /xhs-doctor/api/files/<fname> or /api/files/<fname>
+    const u = new URL(rawUrl, window.location.origin);
+    const filename = u.pathname.split('/').pop();
+    if (!filename) return;
+
+    const r = await fetch(`${BASE}/api/file-token?filename=${encodeURIComponent(filename)}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await r.json();
+    if (!r.ok) return;
+
+    const signed = `${BASE}/api/files/${encodeURIComponent(filename)}?exp=${data.exp}&sig=${data.sig}`;
+    const el = document.getElementById(imgId);
+    if (el) el.src = signed;
+  } catch (e) {
+    // ignore
+  }
 }

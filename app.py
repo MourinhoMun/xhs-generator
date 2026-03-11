@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import hmac
+import hashlib
 from layouts import LAYOUTS, LAYOUT_LIST, ILLUSTRATION_STYLES, ILLUSTRATION_STYLE_LIST
 
 app = FastAPI(title="医生海报科普图文生成器")
@@ -654,26 +656,57 @@ def get_task(task_id: str):
     # GET should be read-only: no settlement side effects here.
     return tasks[task_id]
 
-@app.get("/api/files/{filename}")
-async def download_file(filename: str, authorization: str = Header(default="")):
-    # Basic auth gate (no deduction)
+def _file_token_secret() -> bytes:
+    secret = (os.getenv("FILE_TOKEN_SECRET") or "").strip()
+    if not secret:
+        # Explicit secret required in production deployments.
+        raise RuntimeError("FILE_TOKEN_SECRET is required")
+    return secret.encode("utf-8")
+
+
+def sign_file_token(filename: str, exp: int) -> str:
+    msg = f"{filename}|{exp}".encode("utf-8")
+    return hmac.new(_file_token_secret(), msg, hashlib.sha256).hexdigest()
+
+
+def verify_file_token(filename: str, exp: int, sig: str) -> bool:
+    try:
+        if int(exp) < int(time.time()):
+            return False
+        expected = sign_file_token(filename, int(exp))
+        return hmac.compare_digest(expected, sig or "")
+    except Exception:
+        return False
+
+
+@app.get("/api/file-token")
+async def get_file_token(filename: str, authorization: str = Header(default="")):
+    # Auth required to mint a short-lived file token.
     await require_auth_token(authorization)
 
-    # Only allow serving from known directories
+    exp = int(time.time()) + int(os.getenv("FILE_TOKEN_TTL_SECONDS", "60"))
+    sig = sign_file_token(filename, exp)
+    return {"exp": exp, "sig": sig}
+
+
+@app.get("/api/files/{filename}")
+async def download_file(filename: str, authorization: str = Header(default=""), sig: str = "", exp: int = 0):
+    # Support two modes:
+    # 1) Authorization header (fetch/XHR)
+    # 2) Short-lived signed query (for <img src> / direct download)
+    if authorization:
+        await require_auth_token(authorization)
+    else:
+        if not (sig and exp and verify_file_token(filename, int(exp), sig)):
+            raise HTTPException(401, "Unauthorized")
+
     candidate_paths = [
         os.path.join(UPLOAD_DIR, filename),
         os.path.join(OUTPUT_DIR, filename),
     ]
-    real_paths = []
-    for p in candidate_paths:
-        try:
-            real_paths.append(validate_upload_path(p) if p.startswith(UPLOAD_DIR) else os.path.realpath(p))
-        except Exception:
-            pass
 
     for p in candidate_paths:
         rp = os.path.realpath(p)
-        # uploads must pass validate_upload_path; outputs must be within OUTPUT_DIR
         if rp.startswith(os.path.realpath(UPLOAD_DIR)) or rp.startswith(os.path.realpath(OUTPUT_DIR)):
             if os.path.isfile(rp):
                 from fastapi.responses import FileResponse
