@@ -1,6 +1,6 @@
 const BASE = window.location.pathname.replace(/\/[^/]*$/, '').replace(/\/$/, '');
 
-let photoLocalPath = "", sampleLocalPath = "", selectedPages = 1;
+let photoUrl = "", sampleUrl = "", selectedPages = 1;
 let selectedLayout = "A", selectedStyle = "flat", selectedFontSize = "medium";
 let selectedTitleColor = "#1e293b", selectedBodyColor = "#475569";
 let currentMode = "normal", confirmedContent = null, pollTimer = null;
@@ -64,7 +64,7 @@ window.onload = async () => {
     document.getElementById("department").value = d.department || "";
     if (d.photo_url) {
       document.getElementById("photoPreview").innerHTML = `<img src="${d.photo_url}">`;
-      photoLocalPath = d.photo_local_path || "";
+      photoUrl = d.photo_url || "";
     }
   }
 };
@@ -121,27 +121,40 @@ function saveDoctorInfo(photoUrl) {
     hospital: document.getElementById("hospital").value,
     department: document.getElementById("department").value,
     photo_url: photoUrl || document.getElementById("photoPreview").querySelector("img")?.src || "",
-    photo_local_path: photoLocalPath,
   }));
 }
 
 async function uploadPhoto(input) {
   const file = input.files[0]; if (!file) return;
+  const token = localStorage.getItem("user_token") || "";
+  if (!token) { alert("请先登录（或填写 Token）"); return; }
+
   const fd = new FormData(); fd.append("file", file);
-  const res = await fetch(`${BASE}/api/upload-photo`, { method: "POST", body: fd });
+  const res = await fetch(`${BASE}/api/upload-photo`, { method: "POST", body: fd, headers: { "Authorization": `Bearer ${token}` } });
   const data = await res.json();
+  if (!res.ok) {
+    alert(data?.detail || data?.error || "上传失败");
+    return;
+  }
   document.getElementById("photoPreview").innerHTML = `<img src="${data.url}">`;
-  photoLocalPath = data.local_path;
+  photoUrl = data.url;
   saveDoctorInfo(data.url);
 }
 
 async function uploadSample(input) {
   const file = input.files[0]; if (!file) return;
+  const token = localStorage.getItem("user_token") || "";
+  if (!token) { alert("请先登录（或填写 Token）"); return; }
+
   const fd = new FormData(); fd.append("file", file);
-  const res = await fetch(`${BASE}/api/upload-sample`, { method: "POST", body: fd });
+  const res = await fetch(`${BASE}/api/upload-sample`, { method: "POST", body: fd, headers: { "Authorization": `Bearer ${token}` } });
   const data = await res.json();
+  if (!res.ok) {
+    alert(data?.detail || data?.error || "上传失败");
+    return;
+  }
   document.getElementById("samplePreview").innerHTML = `<img src="${data.url}">`;
-  sampleLocalPath = data.local_path;
+  sampleUrl = data.url;
 }
 
 async function uploadRef(input) {
@@ -243,8 +256,8 @@ async function startGenerate() {
   fd.append("doctor_name", document.getElementById("doctorName").value);
   fd.append("hospital", document.getElementById("hospital").value);
   fd.append("department", document.getElementById("department").value);
-  fd.append("photo_local_path", photoLocalPath);
-  fd.append("sample_local_path", sampleLocalPath);
+  fd.append("photo_url", photoUrl);
+  fd.append("sample_url", sampleUrl);
   fd.append("total_pages", selectedPages);
   fd.append("layout_id", selectedLayout);
   fd.append("illustration_style", selectedStyle);

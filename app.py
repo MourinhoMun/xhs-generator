@@ -3,6 +3,9 @@
 支持：多张系列笔记、8种版式、底图上传、6种插图风格
 """
 import os, uuid, requests, base64, shutil, json, concurrent.futures, threading, time
+from dotenv import load_dotenv
+
+load_dotenv()
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,10 +13,44 @@ from fastapi.staticfiles import StaticFiles
 from layouts import LAYOUTS, LAYOUT_LIST, ILLUSTRATION_STYLES, ILLUSTRATION_STYLE_LIST
 
 app = FastAPI(title="医生海报科普图文生成器")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if not ALLOWED_ORIGINS:
+    # Dev default; production should set ALLOWED_ORIGINS explicitly.
+    ALLOWED_ORIGINS = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 AI_BASE = "https://yunwu.ai"
-AI_KEY = "sk-GOthcTYIVEdXznmrcdxs2CDV51lb9qalw5vMbSBxeFaQFG4f"
+
+def _parse_key_list(env_value: str) -> list:
+    return [k.strip() for k in (env_value or "").split(",") if k.strip()]
+
+# AI key pool (comma-separated). Example: AI_KEYS=sk1,sk2,sk3
+AI_KEYS = _parse_key_list(os.getenv("AI_KEYS", ""))
+if not AI_KEYS:
+    single = os.getenv("AI_KEY", "").strip()
+    if single:
+        AI_KEYS = [single]
+
+if not AI_KEYS:
+    raise RuntimeError("AI_KEYS (or AI_KEY) is required")
+
+_ai_key_lock = threading.Lock()
+_ai_key_idx = 0
+
+def get_next_ai_key() -> str:
+    global _ai_key_idx
+    with _ai_key_lock:
+        key = AI_KEYS[_ai_key_idx % len(AI_KEYS)]
+        _ai_key_idx += 1
+    return key
 TEXT_MODEL = "gemini-2.0-flash"
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
@@ -207,7 +244,7 @@ def retry_with_backoff(max_retries=3, base_delay=1):
 def text_call(prompt):
     resp = requests.post(
         f"{AI_BASE}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {get_next_ai_key()}", "Content-Type": "application/json"},
         json={"model": TEXT_MODEL, "messages": [{"role":"user","content":prompt}], "max_tokens":3000, "temperature":0.7},
         timeout=120,
     )
@@ -219,7 +256,7 @@ def text_call(prompt):
 def image_call(parts_list):
     resp = requests.post(
         f"{AI_BASE}/v1beta/models/{IMAGE_MODEL}:generateContent",
-        headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {get_next_ai_key()}", "Content-Type": "application/json"},
         json={"contents":[{"parts":parts_list}],"generationConfig":{"responseModalities":["IMAGE"]}},
         timeout=180,
     )
@@ -309,7 +346,7 @@ async def ocr_reference(file: UploadFile = File(...), authorization: str = Heade
     prompt = "请识别这张小红书笔记截图中的所有文字内容，包括标题、正文、要点等。只输出识别到的文字，保持原有结构，不要添加任何解释。"
     resp = requests.post(
         f"{AI_BASE}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {get_next_ai_key()}", "Content-Type": "application/json"},
         json={"model": "gpt-4o", "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": f"data:{get_mime(fpath)};base64,{load_image_b64(fpath)}"}},
             {"type": "text", "text": prompt}
@@ -393,8 +430,32 @@ async def preview_content(
 def get_config():
     return {"topics": PRESET_TOPICS, "layouts": LAYOUT_LIST, "illustration_styles": ILLUSTRATION_STYLE_LIST}
 
+async def require_auth_token(authorization: str) -> str:
+    token = (authorization or "").replace("Bearer ", "").strip()
+    if not token:
+        raise HTTPException(401, "授权失效，请重新激活")
+
+    # Validate token once (fail closed)
+    try:
+        r = requests.get(
+            f"{PENGIP_API}/user/balance",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            raise HTTPException(401, "授权失效，请重新激活")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "授权服务暂不可用，请稍后重试")
+
+    return token
+
+
 @app.post("/api/upload-photo")
-async def upload_photo(file: UploadFile = File(...)):
+async def upload_photo(file: UploadFile = File(...), authorization: str = Header(default="")):
+    await require_auth_token(authorization)
+
     ext = validate_image_ext(file.filename)
     content = await file.read()
     validate_file_size(len(content))
@@ -404,10 +465,13 @@ async def upload_photo(file: UploadFile = File(...)):
     validate_upload_path(fpath)
     with open(fpath, "wb") as f:
         f.write(content)
-    return {"url": f"/uploads/{fname}", "local_path": fpath}
+    return {"url": f"/api/files/{fname}"}
+
 
 @app.post("/api/upload-sample")
-async def upload_sample(file: UploadFile = File(...)):
+async def upload_sample(file: UploadFile = File(...), authorization: str = Header(default="")):
+    await require_auth_token(authorization)
+
     ext = validate_image_ext(file.filename)
     content = await file.read()
     validate_file_size(len(content))
@@ -417,7 +481,7 @@ async def upload_sample(file: UploadFile = File(...)):
     validate_upload_path(fpath)
     with open(fpath, "wb") as f:
         f.write(content)
-    return {"url": f"/uploads/{fname}", "local_path": fpath}
+    return {"url": f"/api/files/{fname}"}
 
 @app.post("/api/generate")
 async def generate(bg: BackgroundTasks,
@@ -425,6 +489,9 @@ async def generate(bg: BackgroundTasks,
     doctor_name: str = Form(""),
     hospital: str = Form(""),
     department: str = Form(""),
+    photo_url: str = Form(""),
+    sample_url: str = Form(""),
+    # Back-compat: accept old local path fields but ignore them.
     photo_local_path: str = Form(""),
     sample_local_path: str = Form(""),
     user_points: str = Form(""),
@@ -438,9 +505,7 @@ async def generate(bg: BackgroundTasks,
     authorization: str = Header(default="")):
 
     # 积分预扣（按张数 * 10），最终按成功张数结算并退差额
-    token = authorization.replace("Bearer ", "").strip()
-    if not token:
-        raise HTTPException(401, "授权失效，请重新激活")
+    token = await require_auth_token(authorization)
 
     charge = charge_points(token, "xhs_doctor_generate", total_pages, POINTS_PER_IMAGE)
     if not charge["ok"]:
@@ -449,16 +514,23 @@ async def generate(bg: BackgroundTasks,
     task_id = uuid.uuid4().hex
     doctor_info = {"name": doctor_name, "hospital": hospital, "department": department}
     
-    # 验证路径安全性
-    photo_local_path = (photo_local_path or "").strip()
-    sample_local_path = (sample_local_path or "").strip()
-    
-    if photo_local_path:
-        validate_upload_path(photo_local_path)
-    if sample_local_path:
-        validate_upload_path(sample_local_path)
-    
-    sample_path = sample_local_path if sample_local_path and os.path.exists(sample_local_path) else DEFAULT_SAMPLE
+    def _url_to_upload_path(url: str) -> str:
+        url = (url or "").strip()
+        if not url:
+            return ""
+        # Expect /api/files/<filename>
+        if not url.startswith("/api/files/"):
+            raise HTTPException(400, "非法文件URL")
+        filename = url.split("/api/files/", 1)[1]
+        if not filename:
+            raise HTTPException(400, "非法文件URL")
+        fpath = os.path.join(UPLOAD_DIR, filename)
+        return validate_upload_path(fpath)
+
+    photo_path = _url_to_upload_path(photo_url)
+    sample_path_from_upload = _url_to_upload_path(sample_url)
+
+    sample_path = sample_path_from_upload if sample_path_from_upload and os.path.exists(sample_path_from_upload) else DEFAULT_SAMPLE
     
     with tasks_lock:
         cleanup_old_tasks()
@@ -468,30 +540,36 @@ async def generate(bg: BackgroundTasks,
             "total_pages": total_pages,
             "results": [],
             "created_at": datetime.now().isoformat(),
-            "token": token,
+            # Do not keep bearer token in task state.
             "refund_settled": False,
         }
-    # 生成前通过 /balance 获取 userId，用于差额退款
+
+    # Get userId for refunds (fail closed)
     bal = requests.get(
         f"{PENGIP_API}/user/balance",
         headers={"Authorization": f"Bearer {token}"},
         timeout=10,
     )
+    if bal.status_code != 200:
+        raise HTTPException(503, "授权服务暂不可用，请稍后重试")
+
     user_id = None
-    if bal.status_code == 200:
-        try:
-            user_id = bal.json().get("userId")
-        except Exception:
-            user_id = None
+    try:
+        user_id = bal.json().get("userId")
+    except Exception:
+        user_id = None
+
+    if not user_id:
+        raise HTTPException(503, "授权服务暂不可用，请稍后重试")
 
     update_task(task_id, {"charged_pages": total_pages, "success_pages": 0, "user_id": user_id})
 
-    bg.add_task(do_generate, task_id, topic, user_points, doctor_info,
-                photo_local_path, sample_path, total_pages, layout_id, illustration_style,
+    bg.add_task(do_generate, task_id, token, user_id, topic, user_points, doctor_info,
+                photo_path, sample_path, total_pages, layout_id, illustration_style,
                 title_color, body_color, font_size, confirmed_content)
     return {"task_id": task_id}
 
-def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_path, total_pages, layout_id, illus_style, title_color="#1e293b", body_color="#475569", font_size="medium", confirmed_content=""):
+def do_generate(task_id, token, user_id, topic, user_points, doctor_info, photo_path, sample_path, total_pages, layout_id, illus_style, title_color="#1e293b", body_color="#475569", font_size="medium", confirmed_content=""):
     """生成图片任务。
 
     计费规则：请求开始时已按 total_pages 预扣积分；这里按实际成功页数结算并退差额。
@@ -539,7 +617,7 @@ def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_pat
             results.append({
                 "page": i+1,
                 "chapter_title": page.get("chapter_title",""),
-                "poster_url": f"/output/{fname}"
+                "poster_url": f"/api/files/{fname}",
             })
             success_pages += 1
             update_task(task_id, {"results": list(results)})
@@ -547,39 +625,62 @@ def do_generate(task_id, topic, user_points, doctor_info, photo_path, sample_pat
         update_task(task_id, {"status": "done", "success_pages": success_pages})
     except Exception as e:
         update_task(task_id, {"status": "error", "error": str(e), "success_pages": success_pages})
+    finally:
+        # Settle refund once at task completion.
+        try:
+            charged_pages = int((tasks.get(task_id) or {}).get("charged_pages") or 0)
+            success_pages2 = int((tasks.get(task_id) or {}).get("success_pages") or 0)
+            to_refund = max(0, (charged_pages - success_pages2) * POINTS_PER_IMAGE)
+            if to_refund > 0 and user_id:
+                related_id = f"xhs_doctor_{task_id}"
+                rr = refund_points(
+                    token=token,
+                    user_id=user_id,
+                    amount=to_refund,
+                    related_id=related_id,
+                    reason=f"xhs-doctor refund: success={success_pages2}/{charged_pages}",
+                )
+                if not rr.get("ok"):
+                    update_task(task_id, {"refund_error": rr.get("error")})
+            update_task(task_id, {"refund_settled": True})
+        except Exception as _e:
+            update_task(task_id, {"refund_error": str(_e)})
 
 @app.get("/api/task/{task_id}")
 def get_task(task_id: str):
     if task_id not in tasks:
         raise HTTPException(404, "Task not found")
 
-    t = tasks[task_id]
+    # GET should be read-only: no settlement side effects here.
+    return tasks[task_id]
 
-    # Once task is finished, settle refund exactly once.
-    if t.get("status") in ("done", "error") and not t.get("refund_settled"):
-        charged_pages = int(t.get("charged_pages") or 0)
-        success_pages = int(t.get("success_pages") or 0)
-        user_id = t.get("user_id")
+@app.get("/api/files/{filename}")
+async def download_file(filename: str, authorization: str = Header(default="")):
+    # Basic auth gate (no deduction)
+    await require_auth_token(authorization)
 
-        # Only refund for the difference. (charged = pages*10)
-        to_refund = max(0, (charged_pages - success_pages) * POINTS_PER_IMAGE)
-        if to_refund > 0 and user_id:
-            related_id = f"xhs_doctor_{task_id}"
-            rr = refund_points(
-                token=t.get("token", ""),
-                user_id=user_id,
-                amount=to_refund,
-                related_id=related_id,
-                reason=f"xhs-doctor refund: success={success_pages}/{charged_pages}",
-            )
-            if not rr.get("ok"):
-                update_task(task_id, {"refund_error": rr.get("error")})
+    # Only allow serving from known directories
+    candidate_paths = [
+        os.path.join(UPLOAD_DIR, filename),
+        os.path.join(OUTPUT_DIR, filename),
+    ]
+    real_paths = []
+    for p in candidate_paths:
+        try:
+            real_paths.append(validate_upload_path(p) if p.startswith(UPLOAD_DIR) else os.path.realpath(p))
+        except Exception:
+            pass
 
-        update_task(task_id, {"refund_settled": True})
+    for p in candidate_paths:
+        rp = os.path.realpath(p)
+        # uploads must pass validate_upload_path; outputs must be within OUTPUT_DIR
+        if rp.startswith(os.path.realpath(UPLOAD_DIR)) or rp.startswith(os.path.realpath(OUTPUT_DIR)):
+            if os.path.isfile(rp):
+                from fastapi.responses import FileResponse
+                return FileResponse(rp)
 
-    return t
+    raise HTTPException(404, "File not found")
 
-app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
