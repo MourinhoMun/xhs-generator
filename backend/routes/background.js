@@ -20,27 +20,43 @@ export async function generateBackground(req, res) {
   if (!topic) return res.status(400).json({ error: '请输入主题' });
 
   try {
-    const response = await fetch(`${YUNWU_BASE_URL}/v1/images/generations`, {
+    const response = await fetch(`${YUNWU_BASE_URL}/v1beta/models/gemini-3.1-flash-image-preview:generateContent`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${YUNWU_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gemini-3.1-flash-image-preview',
-        prompt: buildBgPrompt(topic, bg_style),
-        n: 1,
-        size: '1024x1024',
+        contents: [{
+          role: 'user',
+          parts: [{ text: buildBgPrompt(topic, bg_style) }]
+        }],
+        generationConfig: {
+          responseModalities: ['IMAGE']
+        }
       })
     });
 
     const json = await response.json();
     if (!response.ok) throw new Error(json.error?.message || '生成失败');
 
-    const imageUrl = json.data?.[0]?.url;
-    if (!imageUrl) throw new Error('未返回图片URL');
+    const candidate = json.candidates?.[0];
+    const parts = candidate?.content?.parts || [];
 
-    res.json({ success: true, url: imageUrl });
+    let imageData = null;
+    for (const part of parts) {
+      if (part.inline_data || part.inlineData) {
+        const data = part.inline_data || part.inlineData;
+        const mimeType = data.mime_type || data.mimeType;
+        const base64 = data.data;
+        imageData = `data:${mimeType};base64,${base64}`;
+        break;
+      }
+    }
+
+    if (!imageData) throw new Error('未返回图片数据');
+
+    res.json({ success: true, url: imageData });
   } catch (err) {
     console.error('BG gen error:', err.message);
     res.status(500).json({ error: err.message });
