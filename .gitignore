@@ -2,3 +2,7 @@ __pycache__/
 output/
 uploads/
 *.pyc
+
+# local backups
+*.bak*
+*.backup*
